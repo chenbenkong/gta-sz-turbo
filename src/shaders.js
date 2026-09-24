@@ -60,21 +60,21 @@ void main() {
     albedo = mix(vCol, tex * 1.8, 0.85);
   }
 
-  // Procedural windows on building facades
+  // Procedural windows on building facades (finer grid, more variety)
   vec3 emis = vec3(0.0);
   if (uWindowGrid > 0.5 && abs(n.y) < 0.55) {
     vec2 wuv = vUV;
-    vec2 f = fract(wuv * vec2(1.6, 0.35));
-    vec2 cell = floor(wuv * vec2(1.6, 0.35));
-    float lit = step(0.55, hash(cell + floor(vWorld.xz * 0.05)));
-    float winMask = step(0.2, f.x) * step(f.x, 0.8) * step(0.15, f.y) * step(f.y, 0.75);
-    // daytime: slightly reflective glass
-    albedo = mix(albedo, mix(albedo, vec3(0.35, 0.45, 0.55), 0.35), winMask * (1.0 - uNight));
-    albedo = mix(albedo, albedo * 0.55, winMask * uNight * 0.5);
-    float warm = 0.55 + 0.45 * hash(cell + 3.7);
-    vec3 winCol = vec3(1.0, 0.78 + warm * 0.15, 0.45 + warm * 0.25);
+    vec2 f = fract(wuv * vec2(2.4, 0.55));
+    vec2 cell = floor(wuv * vec2(2.4, 0.55));
+    float lit = step(0.48, hash(cell + floor(vWorld.xz * 0.04)));
+    float winMask = step(0.18, f.x) * step(f.x, 0.82) * step(0.12, f.y) * step(f.y, 0.78);
+    // daytime: reflective glass strip
+    albedo = mix(albedo, mix(albedo, vec3(0.32, 0.42, 0.55), 0.4), winMask * (1.0 - uNight));
+    albedo = mix(albedo, albedo * 0.45, winMask * uNight * 0.55);
+    float warm = 0.45 + 0.55 * hash(cell + 3.7);
+    vec3 winCol = mix(vec3(1.0, 0.75, 0.4), vec3(0.7, 0.85, 1.0), step(0.7, hash(cell + 9.1)));
     float nightAmt = uNight * lit * winMask;
-    emis += winCol * nightAmt * (2.2 + 1.0 * warm);
+    emis += winCol * nightAmt * (2.4 + 1.2 * warm);
   }
 
   // Roof slightly darker, ground contact AO
@@ -352,6 +352,8 @@ void main() {
   float isTail   = step(0.8, c.r) * (1.0 - step(0.2, c.g)) * (1.0 - step(0.2, c.b));
   float isChrome = step(0.4, c.r) * step(0.4, c.g) * step(0.4, c.b) * (1.0 - isBody);
   float isDark   = (1.0 - step(0.15, c.r)) * (1.0 - step(0.15, c.g)) * (1.0 - step(0.15, c.b));
+  // GLB props: use vertex color as albedo when it isn't a known ID and paint is white-ish
+  float isProp = (1.0 - isBody) * (1.0 - isGlass) * (1.0 - isRubber) * (1.0 - isHead) * (1.0 - isTail) * (1.0 - isChrome) * (1.0 - isDark);
 
   vec3 albedo;
   if (isGlass > 0.5) albedo = vec3(0.08, 0.12, 0.18);
@@ -359,6 +361,11 @@ void main() {
   else if (isDark > 0.5) albedo = vec3(0.1, 0.1, 0.11);
   else if (isChrome > 0.5) albedo = mix(vec3(0.55, 0.55, 0.58), uPaint * 0.45, 0.35);
   else if (isHead > 0.5 || isTail > 0.5) albedo = c;
+  else if (isProp > 0.5) {
+    // GLB prop: keep vertex color; only tint if paint isn't white
+    float paintMix = 1.0 - uPaint.r * uPaint.g * uPaint.b; // 0 when white
+    albedo = mix(c, c * uPaint * 1.4, clamp(paintMix, 0.0, 0.85));
+  }
   else albedo = uPaint;
 
   if (isBody > 0.5 && n.y > 0.6) albedo *= 0.7;

@@ -44,12 +44,12 @@ function addPoly(V, I, pts, n, y, color, uvScale = 0.05) {
 }
 
 const STYLE_COLORS = {
-  office: [0.78, 0.80, 0.84],
-  residential: [0.84, 0.76, 0.66],
-  commercial: [0.80, 0.74, 0.68],
-  industrial: [0.68, 0.68, 0.66],
-  retail: [0.82, 0.72, 0.60],
-  default: [0.76, 0.74, 0.70],
+  office: [0.82, 0.84, 0.88],
+  residential: [0.88, 0.78, 0.66],
+  commercial: [0.84, 0.76, 0.68],
+  industrial: [0.70, 0.70, 0.68],
+  retail: [0.86, 0.74, 0.60],
+  default: [0.80, 0.76, 0.70],
 };
 
 function styleColor(style, seed) {
@@ -99,7 +99,7 @@ function addBuilding(V, I, building) {
     }
     const pts = area < 0 ? ring.slice().reverse() : ring;
 
-    // Walls
+    // Walls — vertical tiling for facade-like look
     let dist = 0;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
@@ -107,11 +107,10 @@ function addBuilding(V, I, building) {
       const dx = b[0] - a[0], dz = b[1] - a[1];
       const len = Math.hypot(dx, dz);
       if (len < 0.2) continue;
-      const nx = dz / len, nz = -dx / len; // outward for CCW
-      const u0 = dist * 0.12, u1 = (dist + len) * 0.12;
-      const v1 = h * 0.12;
-      // slightly randomize wall shade by edge
-      const shade = 0.92 + 0.08 * ((i * 17) % 7) / 7;
+      const nx = dz / len, nz = -dx / len;
+      const u0 = dist * 0.18, u1 = (dist + len) * 0.18;
+      const v1 = h * 0.2;
+      const shade = 0.88 + 0.12 * ((i * 17) % 7) / 7;
       const wc = [col[0] * shade, col[1] * shade, col[2] * shade];
       addQuad(
         V, I,
@@ -123,6 +122,30 @@ function addBuilding(V, I, building) {
         [u0, 0], [u1, 0], [u1, v1], [u0, v1],
         wc, wc, wc, wc
       );
+      // ground-floor band (darker, shopfront feel)
+      const band = Math.min(4.5, h * 0.2);
+      const bc = [wc[0] * 0.55, wc[1] * 0.55, wc[2] * 0.58];
+      addQuad(
+        V, I,
+        [a[0], 0, a[1]],
+        [b[0], 0, b[1]],
+        [b[0], band, b[1]],
+        [a[0], band, a[1]],
+        [nx, 0, nz],
+        [u0, 0], [u1, 0], [u1, 1], [u0, 1],
+        bc, bc, bc, bc
+      );
+      // roof parapet
+      if (h > 12) {
+        const pc = [roofCol[0] * 1.15, roofCol[1] * 1.15, roofCol[2] * 1.1];
+        addQuad(
+          V, I,
+          [a[0], h, a[1]], [b[0], h, b[1]], [b[0], h + 1.2, b[1]], [a[0], h + 1.2, a[1]],
+          [nx, 0, nz],
+          [u0, 0], [u1, 0], [u1, 0.1], [u0, 0.1],
+          pc, pc, pc, pc
+        );
+      }
       dist += len;
     }
 
@@ -131,23 +154,52 @@ function addBuilding(V, I, building) {
   }
 }
 
-/** Road ribbon along polyline with dashed centerline + edge lines. */
+/** Road ribbon along polyline with sidewalks + dashed centerline + edge lines. */
 function addRoadSegment(V, I, pts, width, color, y = 0.05) {
   const half = width * 0.5;
+  const walk = 1.6;
+  const walkCol = [0.55, 0.54, 0.52];
+  const kerbCol = [0.42, 0.42, 0.42];
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i], b = pts[i + 1];
     const dx = b[0] - a[0], dz = b[1] - a[1];
     const len = Math.hypot(dx, dz);
     if (len < 0.3) continue;
-    const nx = -dz / len * half, nz = dx / len * half;
+    const nx = -dz / len, nz = dx / len;
+    const hw = half;
     const s0 = i * 8, s1 = (i + 1) * 8;
     const edge = [0.55, 0.55, 0.52];
     const paint = [0.7, 0.68, 0.58];
-    // main asphalt
+
+    // sidewalk L / R (slightly raised)
+    const yW = y + 0.12;
+    addQuad(V, I,
+      [a[0] + nx * hw, yW, a[1] + nz * hw], [a[0] + nx * (hw + walk), yW, a[1] + nz * (hw + walk)],
+      [b[0] + nx * (hw + walk), yW, b[1] + nz * (hw + walk)], [b[0] + nx * hw, yW, b[1] + nz * hw],
+      [0, 1, 0], [0, s0], [1, s0], [1, s1], [0, s1],
+      walkCol, walkCol, walkCol, walkCol);
+    addQuad(V, I,
+      [a[0] - nx * (hw + walk), yW, a[1] - nz * (hw + walk)], [a[0] - nx * hw, yW, a[1] - nz * hw],
+      [b[0] - nx * hw, yW, b[1] - nz * hw], [b[0] - nx * (hw + walk), yW, b[1] - nz * (hw + walk)],
+      [0, 1, 0], [0, s0], [1, s0], [1, s1], [0, s1],
+      walkCol, walkCol, walkCol, walkCol);
+    // kerbs
+    addQuad(V, I,
+      [a[0] + nx * hw, y, a[1] + nz * hw], [a[0] + nx * hw, yW, a[1] + nz * hw],
+      [b[0] + nx * hw, yW, b[1] + nz * hw], [b[0] + nx * hw, y, b[1] + nz * hw],
+      [nx, 0, nz], [0, 0], [0, 1], [1, 1], [1, 0],
+      kerbCol, kerbCol, kerbCol, kerbCol);
+    addQuad(V, I,
+      [a[0] - nx * hw, yW, a[1] - nz * hw], [a[0] - nx * hw, y, a[1] - nz * hw],
+      [b[0] - nx * hw, y, b[1] - nz * hw], [b[0] - nx * hw, yW, b[1] - nz * hw],
+      [-nx, 0, -nz], [0, 0], [0, 1], [1, 1], [1, 0],
+      kerbCol, kerbCol, kerbCol, kerbCol);
+
+    // asphalt
     addQuad(
       V, I,
-      [a[0] + nx, y, a[1] + nz], [a[0] - nx, y, a[1] - nz],
-      [b[0] - nx, y, b[1] - nz], [b[0] + nx, y, b[1] + nz],
+      [a[0] + nx * hw, y, a[1] + nz * hw], [a[0] - nx * hw, y, a[1] - nz * hw],
+      [b[0] - nx * hw, y, b[1] - nz * hw], [b[0] + nx * hw, y, b[1] + nz * hw],
       [0, 1, 0], [0, s0], [1, s0], [1, s1], [0, s1],
       color, color, color, color
     );
@@ -155,19 +207,18 @@ function addRoadSegment(V, I, pts, width, color, y = 0.05) {
     const ew = width * 0.06;
     addQuad(
       V, I,
-      [a[0] + nx * 0.92, y + 0.01, a[1] + nz * 0.92], [a[0] + nx * (0.92 - ew), y + 0.01, a[1] + nz * (0.92 - ew)],
-      [b[0] + nx * (0.92 - ew), y + 0.01, b[1] + nz * (0.92 - ew)], [b[0] + nx * 0.92, y + 0.01, b[1] + nz * 0.92],
+      [a[0] + nx * hw * 0.92, y + 0.01, a[1] + nz * hw * 0.92], [a[0] + nx * hw * (0.92 - ew), y + 0.01, a[1] + nz * hw * (0.92 - ew)],
+      [b[0] + nx * hw * (0.92 - ew), y + 0.01, b[1] + nz * hw * (0.92 - ew)], [b[0] + nx * hw * 0.92, y + 0.01, b[1] + nz * hw * 0.92],
       [0, 1, 0], [0, s0], [1, s0], [1, s1], [0, s1],
       edge, edge, edge, edge
     );
     addQuad(
       V, I,
-      [a[0] - nx * (0.92 - ew), y + 0.01, a[1] - nz * (0.92 - ew)], [a[0] - nx * 0.92, y + 0.01, a[1] - nz * 0.92],
-      [b[0] - nx * 0.92, y + 0.01, b[1] - nz * 0.92], [b[0] - nx * (0.92 - ew), y + 0.01, b[1] - nz * (0.92 - ew)],
+      [a[0] - nx * hw * (0.92 - ew), y + 0.01, a[1] - nz * hw * (0.92 - ew)], [a[0] - nx * hw * 0.92, y + 0.01, a[1] - nz * hw * 0.92],
+      [b[0] - nx * hw * 0.92, y + 0.01, b[1] - nz * hw * 0.92], [b[0] - nx * hw * (0.92 - ew), y + 0.01, b[1] - nz * hw * (0.92 - ew)],
       [0, 1, 0], [0, s0], [1, s0], [1, s1], [0, s1],
       edge, edge, edge, edge
     );
-    // dashed centerline (short quads every other segment-ish)
     if (i % 2 === 0 && width > 6) {
       const cw = width * 0.04;
       addQuad(

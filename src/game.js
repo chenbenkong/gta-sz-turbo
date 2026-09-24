@@ -17,6 +17,7 @@ import {
   buildCarMesh, CAR_TYPES, createVehicle, stepVehicle,
   vehicleModelMatrix, collideBuildings,
 } from './vehicle.js';
+import { loadCarMeshes, loadTreeMesh, loadLandmarkMesh } from './assets.js';
 import { createInput } from './input.js';
 import {
   createUI, setLoad, showToast, updateHUD, drawMinimap,
@@ -141,11 +142,30 @@ export async function startGame(canvas) {
     console.warn('nav load failed', e);
   }
 
-  setLoad(ui, 0.8, '构建载具…');
+  setLoad(ui, 0.8, '构建载具与街景…');
   const carMeshes = {};
   for (const t of CAR_TYPES) {
     carMeshes[t.type] = buildCarMesh(gl, t.type);
   }
+  // Real GLB props (original game models)
+  let glbPlayer = null, glbTraffic = null, glbTree = null, glbLandmarks = null;
+  try {
+    const cars = await loadCarMeshes(gl);
+    glbPlayer = cars.player;
+    glbTraffic = cars.traffic;
+  } catch (e) { console.warn('car glb', e); }
+  try {
+    glbTree = await loadTreeMesh(gl);
+  } catch (e) { console.warn('tree glb', e); }
+  // landmarks.glb has broken transforms / non-trivial accessors — skip for now.
+  // Procedural landmark towers from city.json still draw.
+
+  // tree scatter from trees.json
+  let treeSpots = [];
+  try {
+    setLoad(ui, 0.9, '种植行道树…');
+    treeSpots = await loadJSON('city/trees.json');
+  } catch (_) { treeSpots = []; }
 
   // textures (optional)
   let roadTex = null, buildingTex = null;
@@ -238,6 +258,42 @@ export async function startGame(canvas) {
   let camYaw = player.yaw;
   let camPitch = 0.25;
   let carIdx = 0;
+  let onFoot = false;
+  const walker = { x: 0, z: 0, yaw: 0, speed: 0 };
+
+  function toggleFoot() {
+    onFoot = !onFoot;
+    if (onFoot) {
+      walker.x = player.x + Math.cos(player.yaw) * 2.2;
+      walker.z = player.z - Math.sin(player.yaw) * 2.2;
+      walker.yaw = player.yaw;
+      walker.speed = 0;
+      showToast(ui, '步行模式 · F 上车');
+    } else {
+      player.x = walker.x;
+      player.z = walker.z;
+      player.yaw = walker.yaw;
+      player.speed = 0;
+      showToast(ui, '已上车');
+    }
+  }
+
+  function stepWalker(dt) {
+    const t = input.throttle, s = input.steer;
+    const run = input.handbrake ? 6.5 : 3.2;
+    walker.speed = lerp(walker.speed, t * run, 1 - Math.pow(0.001, dt));
+    if (Math.abs(t) > 0.05) {
+      walker.yaw += s * 2.2 * dt * (walker.speed >= 0 ? 1 : -1);
+    } else if (Math.abs(s) > 0.05) {
+      walker.yaw += s * 2.2 * dt;
+    }
+    walker.x += Math.sin(walker.yaw) * walker.speed * dt;
+    walker.z += Math.cos(walker.yaw) * walker.speed * dt;
+    const fake = { x: walker.x, z: walker.z, speed: walker.speed };
+    collideBuildings(fake, city.buildings, 0.6);
+    walker.x = fake.x; walker.z = fake.z;
+    player.x = walker.x; player.z = walker.z; player.yaw = walker.yaw; player.speed = 0;
+  }
 
   ui.btnResume.onclick = () => {
     paused = false;
@@ -290,8 +346,10 @@ export async function startGame(canvas) {
     if (e.code === 'KeyV') cycleCar();
     if (e.code === 'KeyR') {
       player.x = spawn.x; player.z = spawn.z; player.yaw = spawn.yaw || 0; player.speed = 0;
+      onFoot = false;
       showToast(ui, '已复位');
     }
+    if (e.code === 'KeyF') toggleFoot();
     if (e.code === 'KeyH') {
       ui.hud.classList.toggle('hidden');
     }
@@ -373,6 +431,9 @@ export async function startGame(canvas) {
     let side = 1.2;
     if (camMode === 1) { dist = 0.5; height = 1.35; look = 14; side = 0; }
     if (camMode === 2) { dist = 16; height = 7.5; look = 3; side = 2.5; }
+    if (typeof onFoot !== 'undefined' && onFoot) {
+      dist = 4.2; height = 1.9; look = 3.5; side = 0.6;
+    }
 
     const speedT = clamp(Math.abs(player.speed) / 55, 0, 1);
     dist += speedT * 2.0;
@@ -481,8 +542,12 @@ export async function startGame(canvas) {
 
     if (!paused) {
       input.update();
-      stepVehicle(player, input, dt);
-      collideBuildings(player, city.buildings, 1.6);
+      if (onFoot) {
+        stepWalker(dt);
+      } else {
+        stepVehicle(player, input, dt);
+        collideBuildings(player, city.buildings, 1.6);
+      }
       // keep in bounds
       player.x = clamp(player.x, -7500, 7500);
       player.z = clamp(player.z, -3500, 3500);
@@ -605,24 +670,66 @@ export async function startGame(canvas) {
     gl.enable(gl.CULL_FACE);
     gl.disable(gl.BLEND);
 
-    // vehicles — no culling so every cabin/wheel face reads from any angle
+    // vehicles — GLB model with original vertex colors; paint multiplies body-ish tones
     gl.disable(gl.CULL_FACE);
     gl.useProgram(carProg);
     const drawCar = (v) => {
       vehicleModelMatrix(v, model);
       setCommon(carU, {
         uModel: model,
-        uPaint: v.paint,
+        uPaint: v === player ? player.paint : v.paint,
         uBrake: v.brake,
         uHeadlights: env.night > 0.3 ? 1 : (clockH > 18 || clockH < 6 ? 1 : 0.15),
       });
-      drawMesh(gl, carMeshes[v.type] || carMeshes.sedan);
+      const mesh = (v === player ? (glbPlayer || carMeshes[v.type] || carMeshes.sedan)
+        : (glbTraffic || carMeshes[v.type] || carMeshes.sedan));
+      drawMesh(gl, mesh);
     };
     drawCar(player);
     for (const v of traffic) {
       const dx = v.x - player.x, dz = v.z - player.z;
       if (dx * dx + dz * dz > 400 * 400) continue;
       drawCar(v);
+    }
+
+    // trees — skip ones that would swallow the camera/car
+    if (glbTree) {
+      gl.useProgram(carProg);
+      const white = [1, 1, 1];
+      const near = [];
+      for (let i = 0; i < treeSpots.length; i++) {
+        const t = treeSpots[i];
+        const dx = t[0] - player.x, dz = t[1] - player.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < 8 * 8) continue; // don't spawn on top of the car
+        if (d2 < 160 * 160) near.push([d2, t]);
+      }
+      near.sort((a, b) => a[0] - b[0]);
+      const lim = Math.min(160, near.length);
+      for (let i = 0; i < lim; i++) {
+        const t = near[i][1];
+        let sc = t[3] || 1;
+        if (!(sc > 0.2)) sc = 1;
+        if (sc > 2) sc = 2;
+        m4compose(model, t[0], 0, t[1], t[2] || 0, 0, 0);
+        model[0] *= sc; model[5] *= sc; model[10] *= sc;
+        setCommon(carU, { uModel: model, uPaint: white, uBrake: 0, uHeadlights: 0 });
+        drawMesh(gl, glbTree);
+      }
+    }
+
+    // landmarks (already in city coordinates)
+    if (glbLandmarks) {
+      gl.disable(gl.CULL_FACE);
+      gl.useProgram(cityProg);
+      setCommon(cityU, {
+        uModel: world.identity,
+        uUseTex: 0,
+        uWindowGrid: 1,
+        uEmissive: 1,
+      });
+      drawMesh(gl, glbLandmarks);
+      gl.enable(gl.CULL_FACE);
     }
     gl.enable(gl.CULL_FACE);
 
