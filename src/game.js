@@ -22,6 +22,7 @@ import {
 } from './assets.js';
 import { createCrowd, createPlane, stepPlane } from './crowd.js';
 import { createStreamer } from './chunk-stream.js';
+import { createPost, POST_VS, BRIGHT_FS, BLUR_FS, GRADE_FS } from './post.js';
 import { createInput } from './input.js';
 import { createUI, setLoad, showToast, updateHUD, drawMinimap } from './ui.js';
 
@@ -91,6 +92,14 @@ export async function startGame(canvas) {
   const skyU = getUniforms(gl, skyProg);
   const carProg = createProgram(gl, CAR_VS, CAR_FS_CLEAN);
   const carU = getUniforms(gl, carProg);
+
+  // cinematic post
+  const post = createPost(gl);
+  const postProgs = {
+    bright: createProgram(gl, POST_VS, BRIGHT_FS),
+    blur: createProgram(gl, POST_VS, BLUR_FS),
+    grade: createProgram(gl, POST_VS, GRADE_FS),
+  };
 
   // sky triangle
   const skyVao = gl.createVertexArray();
@@ -209,6 +218,7 @@ export async function startGame(canvas) {
       canvas.width = w; canvas.height = h;
     }
     gl.viewport(0, 0, w, h);
+    post.resize(w, h);
   }
   window.addEventListener('resize', applySize);
   applySize();
@@ -437,7 +447,8 @@ export async function startGame(canvas) {
     }
     updateCamera(dt);
 
-    // ---- render ----
+    // ---- render to scene FBO, then cinematic grade ----
+    post.bindScene();
     gl.clearColor(env.fogColor[0], env.fogColor[1], env.fogColor[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -570,6 +581,14 @@ export async function startGame(canvas) {
       }
     }
     gl.enable(gl.CULL_FACE);
+
+    // cinematic grade + bloom + vignette
+    post.present(postProgs, {
+      time: timeSec,
+      night: env.night,
+      speed: clamp(Math.abs(player.speed) / 55, 0, 1),
+      bloom: 0.5 + env.night * 0.35,
+    });
 
     // HUD
     const kmh = inPlane ? Math.abs(player.speed) * 3.6 : Math.abs(player.speed) * 3.6;
