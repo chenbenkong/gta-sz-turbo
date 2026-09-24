@@ -1,9 +1,17 @@
-# 深城纪 · 一键本地启动
+# 深城纪 · 一键本地启动（含首次几何优化）
 # 用法: powershell -ExecutionPolicy Bypass -File .\Launch-Game.ps1
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
+
+# First-run: bake original GLBs into streamable chunks
+if (-not (Test-Path (Join-Path $root "city-opt\index.json"))) {
+  Write-Host "  首次启动：优化原版模型（约 1-2 分钟）…" -ForegroundColor Yellow
+  $node = $env:MIMO_NODE
+  if (-not $node) { $node = "node" }
+  & $node tools\optimize-city.mjs
+}
 
 $port = 8765
 while (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue) {

@@ -52,16 +52,19 @@ export async function loadProp(gl, url, opts = {}) {
 }
 
 export async function loadCarMeshes(gl) {
-  // traffic-car.glb is a clean, correctly-scaled sedan (2.3 × 1.4 × 4.6).
-  // car.glb has broken node transforms (bbox ~32m) — skip it.
-  let mesh = null;
+  // Prefer original car.glb (correct after byteStride fix); fallback traffic-car.
+  let player = null, traffic = null;
   try {
-    mesh = await loadProp(gl, 'city/traffic-car.glb', { targetLen: 4.6 });
+    player = await loadProp(gl, 'city/car.glb', { targetLen: 5.0 });
   } catch (e) {
-    console.warn('traffic-car.glb', e);
-    return { player: null, traffic: null };
+    console.warn('car.glb', e);
+    try { player = await loadProp(gl, 'city/traffic-car.glb', { targetLen: 4.6 }); }
+    catch (e2) { return { player: null, traffic: null }; }
   }
-  return { player: mesh, traffic: mesh };
+  try {
+    traffic = await loadProp(gl, 'city/traffic-car.glb', { targetLen: 4.4 });
+  } catch (_) { traffic = player; }
+  return { player, traffic };
 }
 
 export async function loadTreeMesh(gl) {
@@ -76,13 +79,20 @@ export async function loadPedestrianMesh(gl) {
   return loadProp(gl, 'city/pedestrian.glb', { targetLen: 1.75, ground: 0 });
 }
 
+export async function loadPlayerCharacter(gl) {
+  // Original game character (chenye) for walk mode
+  try {
+    return await loadProp(gl, 'city/chenye.glb', { targetLen: 1.8, ground: 0 });
+  } catch (_) {
+    return loadPedestrianMesh(gl);
+  }
+}
+
 export async function loadPlaneMesh(gl) {
   return loadProp(gl, 'city/floatplane.glb', { targetLen: 14, ground: 0 });
 }
 
 export async function loadLandmarkMesh(gl) {
-  // landmarks.glb is a collection placed in city coordinates already
-  // (nodes carry world transforms). Do NOT re-center — keep as-is.
   const parsed = await loadGLB('city/landmarks.glb');
   const merged = mergeParsed(parsed);
   return createMesh(gl, merged.vertices, merged.indices);
