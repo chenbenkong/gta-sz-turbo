@@ -21,26 +21,41 @@ function readAccessor(json, bin, idx) {
   const comps = compCount(acc.type);
   const n = acc.count;
   const out = new Float32Array(n * comps);
-  const start = (view.byteOffset || 0) + (acc.byteOffset || 0);
-  const dv = new DataView(bin.buffer, bin.byteOffset + start, acc.count * comps * 4);
-  for (let i = 0; i < n * comps; i++) out[i] = dv.getFloat32(i * 4, true);
+  const viewStart = (view.byteOffset || 0) + (acc.byteOffset || 0);
+  // Support interleaved buffer views via byteStride
+  const compBytes = 4;
+  const tightStride = comps * compBytes;
+  const stride = view.byteStride || tightStride;
+  for (let i = 0; i < n; i++) {
+    const off = viewStart + i * stride;
+    if (off + tightStride > bin.byteLength) break;
+    const dv = new DataView(bin.buffer, bin.byteOffset + off, tightStride);
+    for (let c = 0; c < comps; c++) out[i * comps + c] = dv.getFloat32(c * 4, true);
+  }
   return { data: out, comps, count: n };
 }
 
 function readIndices(json, bin, idx) {
   const acc = json.accessors[idx];
   const view = json.bufferViews[acc.bufferView];
-  const start = (view.byteOffset || 0) + (acc.byteOffset || 0);
+  const viewStart = (view.byteOffset || 0) + (acc.byteOffset || 0);
   const n = acc.count;
+  const stride = view.byteStride || (acc.componentType === UINT32 ? 4 : 2);
   if (acc.componentType === UINT32) {
     const out = new Uint32Array(n);
-    const dv = new DataView(bin.buffer, bin.byteOffset + start, n * 4);
-    for (let i = 0; i < n; i++) out[i] = dv.getUint32(i * 4, true);
+    for (let i = 0; i < n; i++) {
+      const off = viewStart + i * stride;
+      if (off + 4 > bin.byteLength) break;
+      out[i] = new DataView(bin.buffer, bin.byteOffset + off, 4).getUint32(0, true);
+    }
     return out;
   }
   const out = new Uint16Array(n);
-  const dv = new DataView(bin.buffer, bin.byteOffset + start, n * 2);
-  for (let i = 0; i < n; i++) out[i] = dv.getUint16(i * 2, true);
+  for (let i = 0; i < n; i++) {
+    const off = viewStart + i * stride;
+    if (off + 2 > bin.byteLength) break;
+    out[i] = new DataView(bin.buffer, bin.byteOffset + off, 2).getUint16(0, true);
+  }
   return out;
 }
 

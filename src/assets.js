@@ -72,6 +72,14 @@ export async function loadPalmMesh(gl) {
   return loadProp(gl, 'city/palm.glb', { targetLen: 9, ground: 0 });
 }
 
+export async function loadPedestrianMesh(gl) {
+  return loadProp(gl, 'city/pedestrian.glb', { targetLen: 1.75, ground: 0 });
+}
+
+export async function loadPlaneMesh(gl) {
+  return loadProp(gl, 'city/floatplane.glb', { targetLen: 14, ground: 0 });
+}
+
 export async function loadLandmarkMesh(gl) {
   // landmarks.glb is a collection placed in city coordinates already
   // (nodes carry world transforms). Do NOT re-center — keep as-is.

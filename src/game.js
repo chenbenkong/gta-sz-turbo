@@ -17,7 +17,8 @@ import {
   buildCarMesh, CAR_TYPES, createVehicle, stepVehicle,
   vehicleModelMatrix, collideBuildings,
 } from './vehicle.js';
-import { loadCarMeshes, loadTreeMesh, loadLandmarkMesh } from './assets.js';
+import { loadCarMeshes, loadTreeMesh, loadLandmarkMesh, loadPedestrianMesh, loadPlaneMesh } from './assets.js';
+import { createCrowd, createPlane, stepPlane } from './crowd.js';
 import { createInput } from './input.js';
 import {
   createUI, setLoad, showToast, updateHUD, drawMinimap,
@@ -159,6 +160,22 @@ export async function startGame(canvas) {
   } catch (e) { console.warn('tree glb', e); }
   // landmarks.glb has broken transforms / non-trivial accessors — skip for now.
   // Procedural landmark towers from city.json still draw.
+  let glbPed = null, glbPlane = null, crowd = null;
+  try {
+    glbPed = await loadPedestrianMesh(gl);
+  } catch (e) { console.warn('ped glb', e); }
+  try {
+    glbPlane = await loadPlaneMesh(gl);
+  } catch (e) { console.warn('plane glb', e); }
+
+  // pedestrian crowd
+  try {
+    setLoad(ui, 0.92, '召集行人…');
+    const paths = await loadJSON('city/pedestrian-paths.json');
+    // paths is flat [x1,z1,x2,z2,...]
+    const flat = Array.isArray(paths[0]) ? paths.flat() : paths;
+    crowd = createCrowd(flat, 40);
+  } catch (e) { console.warn('crowd', e); }
 
   // tree scatter from trees.json
   let treeSpots = [];
@@ -259,23 +276,51 @@ export async function startGame(canvas) {
   let camPitch = 0.25;
   let carIdx = 0;
   let onFoot = false;
+  let inPlane = false;
+  let plane = null;
   const walker = { x: 0, z: 0, yaw: 0, speed: 0 };
+  const parked = { x: 0, z: 0, yaw: 0, paint: [0.9, 0.2, 0.15], type: 'sports' };
 
   function toggleFoot() {
+    if (inPlane) return;
     onFoot = !onFoot;
     if (onFoot) {
-      walker.x = player.x + Math.cos(player.yaw) * 2.2;
-      walker.z = player.z - Math.sin(player.yaw) * 2.2;
+      // remember where the car stays
+      parked.x = player.x; parked.z = player.z; parked.yaw = player.yaw;
+      parked.paint = player.paint; parked.type = player.type;
+      walker.x = player.x + Math.cos(player.yaw) * 2.4;
+      walker.z = player.z - Math.sin(player.yaw) * 2.4;
       walker.yaw = player.yaw;
       walker.speed = 0;
-      showToast(ui, '步行模式 · F 上车');
+      showToast(ui, '步行模式 · F 上车 · B 呼叫飞机');
     } else {
-      player.x = walker.x;
-      player.z = walker.z;
-      player.yaw = walker.yaw;
+      // return to the parked car
+      player.x = parked.x;
+      player.z = parked.z;
+      player.yaw = parked.yaw;
       player.speed = 0;
       showToast(ui, '已上车');
     }
+  }
+
+  function togglePlane() {
+    if (inPlane) {
+      // land back in car
+      inPlane = false;
+      player.x = plane.x;
+      player.z = plane.z;
+      player.yaw = plane.yaw;
+      player.speed = 0;
+      onFoot = false;
+      showToast(ui, '已落地');
+      return;
+    }
+    onFoot = false;
+    inPlane = true;
+    plane = createPlane(player.x + Math.sin(player.yaw) * 30, player.z + Math.cos(player.yaw) * 30, player.yaw);
+    plane.y = 50;
+    plane.speed = 40;
+    showToast(ui, '水上飞机 · W/S 油门 · A/D 转向 · Q/E 升降 · B 落地');
   }
 
   function stepWalker(dt) {
@@ -292,7 +337,8 @@ export async function startGame(canvas) {
     const fake = { x: walker.x, z: walker.z, speed: walker.speed };
     collideBuildings(fake, city.buildings, 0.6);
     walker.x = fake.x; walker.z = fake.z;
-    player.x = walker.x; player.z = walker.z; player.yaw = walker.yaw; player.speed = 0;
+    // camera follows the walker; car stays parked
+    player.x = walker.x; player.z = walker.z; player.yaw = walker.yaw; player.speed = 0; player.y = 0;
   }
 
   ui.btnResume.onclick = () => {
@@ -347,9 +393,11 @@ export async function startGame(canvas) {
     if (e.code === 'KeyR') {
       player.x = spawn.x; player.z = spawn.z; player.yaw = spawn.yaw || 0; player.speed = 0;
       onFoot = false;
+      if (inPlane) { inPlane = false; plane = null; }
       showToast(ui, '已复位');
     }
     if (e.code === 'KeyF') toggleFoot();
+    if (e.code === 'KeyB') togglePlane();
     if (e.code === 'KeyH') {
       ui.hud.classList.toggle('hidden');
     }
@@ -431,8 +479,12 @@ export async function startGame(canvas) {
     let side = 1.2;
     if (camMode === 1) { dist = 0.5; height = 1.35; look = 14; side = 0; }
     if (camMode === 2) { dist = 16; height = 7.5; look = 3; side = 2.5; }
-    if (typeof onFoot !== 'undefined' && onFoot) {
+    if (onFoot) {
       dist = 4.2; height = 1.9; look = 3.5; side = 0.6;
+    }
+    if (inPlane && plane) {
+      dist = 18; height = 6; look = 12; side = 2;
+      // look slightly along pitch
     }
 
     const speedT = clamp(Math.abs(player.speed) / 55, 0, 1);
@@ -442,9 +494,10 @@ export async function startGame(canvas) {
     const yaw = player.yaw;
     // right vector in XZ: (cos yaw, -sin yaw)?  forward=(sin,cos), right=(cos,-sin)
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    const baseY = player.y || 0;
     const tx = player.x - Math.sin(yaw) * dist + rx * side;
     const tz = player.z - Math.cos(yaw) * dist + rz * side;
-    const ty = player.y + height;
+    const ty = baseY + height;
 
     // smooth follow
     const k = 1 - Math.pow(0.002, dt);
@@ -453,7 +506,7 @@ export async function startGame(canvas) {
     camPos[2] = lerp(camPos[2], tz, k);
 
     camTarget[0] = player.x + fx * look;
-    camTarget[1] = player.y + 1.0;
+    camTarget[1] = baseY + (inPlane ? 0.5 : 1.0);
     camTarget[2] = player.z + fz * look;
 
     const fov = (56 + speedT * 12) * Math.PI / 180;
@@ -542,12 +595,23 @@ export async function startGame(canvas) {
 
     if (!paused) {
       input.update();
-      if (onFoot) {
+      if (inPlane && plane) {
+        stepPlane(plane, input, dt);
+        player.x = plane.x; player.z = plane.z; player.yaw = plane.yaw;
+        player.y = plane.y; player.speed = plane.speed;
+        if (!plane.alive) {
+          showToast(ui, '迫降！R 复位 / B 再起飞');
+          plane.alive = true;
+          plane.y = 8;
+          plane.speed = 20;
+        }
+      } else if (onFoot) {
         stepWalker(dt);
       } else {
         stepVehicle(player, input, dt);
         collideBuildings(player, city.buildings, 1.6);
       }
+      if (crowd) crowd.update(dt, player.x, player.z);
       // keep in bounds
       player.x = clamp(player.x, -7500, 7500);
       player.z = clamp(player.z, -3500, 3500);
@@ -670,26 +734,62 @@ export async function startGame(canvas) {
     gl.enable(gl.CULL_FACE);
     gl.disable(gl.BLEND);
 
-    // vehicles — GLB model with original vertex colors; paint multiplies body-ish tones
+    // vehicles / walker / plane
     gl.disable(gl.CULL_FACE);
     gl.useProgram(carProg);
-    const drawCar = (v) => {
-      vehicleModelMatrix(v, model);
+
+    if (inPlane && plane && glbPlane) {
+      m4compose(model, plane.x, plane.y, plane.z, plane.yaw, plane.pitch, plane.roll);
       setCommon(carU, {
         uModel: model,
-        uPaint: v === player ? player.paint : v.paint,
-        uBrake: v.brake,
-        uHeadlights: env.night > 0.3 ? 1 : (clockH > 18 || clockH < 6 ? 1 : 0.15),
+        uPaint: [0.85, 0.88, 0.9],
+        uBrake: 0,
+        uHeadlights: env.night > 0.3 ? 1 : 0,
       });
-      const mesh = (v === player ? (glbPlayer || carMeshes[v.type] || carMeshes.sedan)
-        : (glbTraffic || carMeshes[v.type] || carMeshes.sedan));
-      drawMesh(gl, mesh);
-    };
-    drawCar(player);
-    for (const v of traffic) {
-      const dx = v.x - player.x, dz = v.z - player.z;
-      if (dx * dx + dz * dz > 400 * 400) continue;
-      drawCar(v);
+      drawMesh(gl, glbPlane);
+    } else if (onFoot && glbPed) {
+      const bob = Math.sin(timeSec * 8) * Math.min(0.06, Math.abs(walker.speed) * 0.02);
+      m4compose(model, walker.x, bob, walker.z, walker.yaw, 0, 0);
+      setCommon(carU, {
+        uModel: model,
+        uPaint: [0.75, 0.35, 0.25],
+        uBrake: 0,
+        uHeadlights: 0,
+      });
+      drawMesh(gl, glbPed);
+      // parked car stays where we left it
+      m4compose(model, parked.x, 0, parked.z, parked.yaw, 0, 0);
+      setCommon(carU, {
+        uModel: model,
+        uPaint: parked.paint,
+        uBrake: 0,
+        uHeadlights: env.night > 0.3 ? 1 : 0,
+      });
+      drawMesh(gl, glbPlayer || carMeshes.sedan);
+    } else {
+      const drawCar = (v) => {
+        vehicleModelMatrix(v, model);
+        setCommon(carU, {
+          uModel: model,
+          uPaint: v === player ? player.paint : v.paint,
+          uBrake: v.brake,
+          uHeadlights: env.night > 0.3 ? 1 : (clockH > 18 || clockH < 6 ? 1 : 0.15),
+        });
+        const mesh = (v === player ? (glbPlayer || carMeshes[v.type] || carMeshes.sedan)
+          : (glbTraffic || carMeshes[v.type] || carMeshes.sedan));
+        drawMesh(gl, mesh);
+      };
+      drawCar(player);
+      for (const v of traffic) {
+        const dx = v.x - player.x, dz = v.z - player.z;
+        if (dx * dx + dz * dz > 400 * 400) continue;
+        drawCar(v);
+      }
+    }
+
+    // pedestrians
+    if (crowd && glbPed && !(inPlane)) {
+      crowd.draw(gl, carProg, carU, setCommon, glbPed, model, player.x, player.z);
     }
 
     // trees — skip ones that would swallow the camera/car

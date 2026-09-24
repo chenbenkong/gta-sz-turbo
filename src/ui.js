@@ -31,7 +31,7 @@ export function createUI(root) {
         </div>
         <div class="controls-hint">
           <span>W/S 油门刹车</span><span>A/D 转向</span><span>空格 手刹</span>
-          <span>C 视角</span><span>N 昼夜</span><span>V 换车</span><span>R 复位</span>
+          <span>F 上下车</span><span>B 飞机</span><span>C 视角</span><span>N 昼夜</span><span>R 复位</span>
         </div>
       </div>
     </div>

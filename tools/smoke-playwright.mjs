@@ -51,6 +51,21 @@ await page.waitForTimeout(2500);
 await page.keyboard.up('KeyW');
 await page.screenshot({ path: path.join(OUT, '03-driving.png'), fullPage: false });
 
+// on-foot
+await page.keyboard.press('KeyF');
+await page.waitForTimeout(800);
+await page.screenshot({ path: path.join(OUT, '05-onfoot.png'), fullPage: false });
+await page.keyboard.down('KeyW');
+await page.waitForTimeout(800);
+await page.keyboard.up('KeyW');
+await page.keyboard.press('KeyF'); // back in car
+
+// plane
+await page.keyboard.press('KeyB');
+await page.waitForTimeout(1200);
+await page.screenshot({ path: path.join(OUT, '06-plane.png'), fullPage: false });
+await page.keyboard.press('KeyB'); // land
+
 // pixel sanity on DAY frame (before night)
 const statsDay = await page.evaluate(() => {
   const c = document.getElementById('game');
